@@ -1,0 +1,157 @@
+---
+title: "Practical Machine Learning Project"
+author: "Romy Susvilla"
+date: "November 18, 2014"
+output: html_document
+---
+
+Synopsis
+--------
+
+The goal of this project is to apply what we have learned in the Practical Machine Learning class to a problem related to human activity recognition.  We are given data collected from devices with accelerometers attached on the belt, forearm, arm and dumbell of 6 participants.  The devices captured the data while they performed barbell lifts correctly and incorrectly in 5 different ways.  Given a set of training and testing data, our task is to come up with a model that can predict the manner in which they did the exercise.  We then use the prediction model to predict 20 test cases.
+
+The data for this project come from this source: <http://groupware.les.inf.puc-rio.br/har>.  
+
+Data Preprocessing
+------------------
+
+First we download a set of training and "out of sample" testing data.
+
+```{r, echo=FALSE, results='hide'}
+trainurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+#Original Training data.
+origTraining <- download.file(trainurl,"/users/rsusvilla/documents/coursera/PracticalMachineLearning/pml-training.csv",method="curl")
+origTraining <- read.table("/users/rsusvilla/documents/coursera/PracticalMachineLearning/pml-training.csv",header=T,sep=",")
+#Out of sample test data.
+oosTesting <- download.file(testurl,"/users/rsusvilla/documents/coursera/PracticalMachineLearning/pml-testing.csv",method="curl")
+oosTesting <- read.table("/users/rsusvilla/documents/coursera/PracticalMachineLearning/pml-testing.csv",header=T,sep=",")
+
+str(origTraining)
+summary(origTraining)
+
+str(oosTesting)
+summary(oosTesting)
+```
+
+An initial exploratory analysis of the training data shows 19,622 observations and 160 variables.  The out of sample testing data has 20 observations and 160 variables. The "classe" variable is the variable we want to predict and it has 5 unique values - A, B, C, D, E.  More than 2/3 of the variables contain missing data and needs to be deleted from the training dataset. 
+
+I also referred to an existing study (Qualitative Activity Recognition of Weight Lifting Exercises
+) on the same data with link here: <http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf>.  The study mentioned on section 5.1 how they did feature selection and extraction.  I added this information to how I went about selecting which variables to retain and use for training my model. 
+
+```{r,echo=FALSE,results='hide',cache=TRUE}
+#Get list of columns we want to delete.
+delcols <- c(grep("stddev_",names(origTraining),value=TRUE), grep("min_",names(origTraining),value=TRUE),grep("max_",names(origTraining),value=TRUE),grep("kurtosis_",names(origTraining),value=TRUE),grep("skewness_",names(origTraining),value=TRUE),grep("amplitude_",names(origTraining),value=TRUE),grep("avg_",names(origTraining),value=TRUE),grep("var_",names(origTraining),value=TRUE))
+delcols
+#Delete columns.
+trainingEdit <- origTraining[, !(colnames(origTraining) %in% delcols)]
+
+#Delete first 7 columns deemed unnecessary. "X", "user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window"   
+trainingEdit <- trainingEdit[,-c(1:7)]
+```
+
+After the initial data cleanup I ran a nearZeroVar() function to find out if there are variables with near zero variability.  I found none.
+
+```{r,echo=FALSE,cache=TRUE}
+library(caret)
+#Check near zero variability.
+nzv <- nearZeroVar(trainingEdit, saveMetrics=TRUE)
+#Look at report.
+nzv
+```
+
+
+Building the Model
+------------------
+
+Based on the problem at hand, a classic classification task, and what I've learned so far in this course, I have decided that the random forests machine learning method is the best method to use.  I created 3 partitions of the training dataset so I can do cross validation.
+
+```{r,echo=FALSE}
+library(caret)
+library(randomForest)
+library(verification)
+```
+
+Create 3 Partitions
+
+```{r,echo=TRUE,results='markup',cache=TRUE}
+set.seed(2348)
+inTrain <- createDataPartition(y=trainingEdit$classe,times=3,p=.30,list=FALSE)
+```
+
+Run randomForest method on training data 1 to generate a model, then run it against the test data 1.  Get the overall accuracy. 
+
+```{r,echo=TRUE,results='markup',cache=TRUE}
+training1 <- trainingEdit[inTrain[,1],]
+testing1 <- trainingEdit[-inTrain[,1],]
+modFit1 <- randomForest(classe ~ ., data=training1, importance=TRUE)
+pred1 <- predict(modFit1,testing1)
+cm1 <- confusionMatrix(pred1,testing1$classe)
+cm1$overall[1]
+```
+
+Do the same on training data 2.
+
+```{r,echo=TRUE,results='markup',cache=TRUE}
+training2 <- trainingEdit[inTrain[,2],]
+testing2 <- trainingEdit[-inTrain[,2],]
+modFit2 <- randomForest(classe ~ ., data=training2, importance=TRUE)
+pred2 <- predict(modFit2,testing2)
+confusionMatrix(pred1,testing2$classe)
+cm2 <- confusionMatrix(pred2,testing2$classe)
+cm2$overall[1]
+```
+
+Do the same on training data 3.
+
+```{r,echo=TRUE,results='markup',cache=TRUE}
+training3 <- trainingEdit[inTrain[,3],]
+testing3 <- trainingEdit[-inTrain[,3],]
+modFit3 <- randomForest(classe ~ ., data=training3, importance=TRUE)
+pred3 <- predict(modFit3,testing3)
+confusionMatrix(pred1,testing3$classe)
+cm3 <- confusionMatrix(pred2,testing2$classe)
+cm3$overall[1]
+```
+
+Get the average of the out of sample error rate from the 3 models.
+
+```{r,echo=TRUE,results='markup',cache=TRUE}
+#Average out of sample error rate.
+1 - mean(c(cm1$overall[1],cm2$overall[1],cm3$overall[1]))
+```
+
+I am quite happy with the average out of sample error rate of 1.5% so I am inclined to use any of the models I generated from my 3 training datasets.  I could have done additional analysis using the varImp() function to find the important variables to use in the model but at this point I don't think I needed it. 
+
+Run the Models against the Test Data
+------------------------------------
+
+Now I run the 3 models against the out of sample test data and I got exactly the same results.
+
+```{r,echo=TRUE,results='markup'}
+Model1Prediction <- predict(modFit1,oosTesting)
+Model1Prediction
+Model2Prediction <- predict(modFit2,oosTesting)
+Model2Prediction
+Model3Prediction <- predict(modFit3,oosTesting)
+Model3Prediction
+```
+
+Prediction Submission
+---------------------
+
+```{r,echo=TRUE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+answers <- Model3Prediction
+pml_write_files(answers)
+```
+
+
+
+
